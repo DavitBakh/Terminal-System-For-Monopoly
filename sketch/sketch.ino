@@ -1,120 +1,202 @@
-#include <SPI.h>      //include the SPI bus library
-#include <MFRC522.h>  //include the RFID reader library
- 
-#define SS_PIN 10  //slave select pin
-#define RST_PIN 5  //reset pin
- 
-MFRC522 mfrc522(SS_PIN, RST_PIN);  // instatiate a MFRC522 reader object.
-MFRC522::MIFARE_Key key;          //create a MIFARE_Key struct named 'key', which will hold the card information
- 
-//this is the block number we will write into and then read.
-int block=2;  
- 
-byte blockcontent[16] = {"Please Subscribe"};  //an array with 16 bytes to be written into one of the 64 card blocks is defined
-//byte blockcontent[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};  //all zeros. This can be used to delete a block.
- 
-//This array is used for reading out a block.
-byte readbackblock[18];
- 
-void setup() 
-{
-    Serial.begin(9600);        // Initialize serial communications with the PC
-    SPI.begin();               // Init SPI bus
-    mfrc522.PCD_Init();        // Init MFRC522 card (in case you wonder what PCD means: proximity coupling device)
-    Serial.println("Scan a MIFARE Classic card");
-   
-  // Prepare the security key for the read and write functions.
-  for (byte i = 0; i < 6; i++) {
-    key.keyByte[i] = 0xFF;  //keyByte is defined in the "MIFARE_Key" 'struct' definition in the .h file of the library
+#include <SPI.h>
+#include <MFRC522.h>
+
+#define RST_PIN 9  // Пин rfid модуля RST
+#define SS_PIN 10  // Пин rfid модуля SS
+
+MFRC522 rfid(SS_PIN, RST_PIN);  // Объект rfid модуля
+MFRC522::MIFARE_Key key;        // Объект ключа
+MFRC522::StatusCode status;     // Объект статуса
+
+void setup() {
+  Serial.begin(9600);  // Инициализация Serial
+  Serial.setTimeout(5);
+
+  SPI.begin();                               // Инициализация SPI
+  rfid.PCD_Init();                           // Инициализация модуля
+  rfid.PCD_SetAntennaGain(rfid.RxGain_max);  // Установка усиления антенны
+  rfid.PCD_AntennaOff();                     // Перезагружаем антенну
+  rfid.PCD_AntennaOn();                      // Включаем антенну
+
+  for (byte i = 0; i < 6; i++) {  // Наполняем ключ
+    key.keyByte[i] = 0xFF;        // Ключ по умолчанию 0xFFFFFFFFFFFF
   }
 }
- 
-void loop()
-{  
-  // Look for new cards
-  if ( ! mfrc522.PICC_IsNewCardPresent()) {
+
+void loop() {
+  // Занимаемся чем угодно
+
+  static uint32_t rebootTimer = millis();  // Важный костыль против зависания модуля!
+  if (millis() - rebootTimer >= 1000) {    // Таймер с периодом 1000 мс
+    rebootTimer = millis();                // Обновляем таймер
+    digitalWrite(RST_PIN, HIGH);           // Сбрасываем модуль
+    delayMicroseconds(2);                  // Ждем 2 мкс
+    digitalWrite(RST_PIN, LOW);            // Отпускаем сброс
+    rfid.PCD_Init();                       // Инициализируем заного
+  }
+
+
+  // send data only when you receive data:
+  if (Serial.available() > 1) {
+    // read the incoming byte:
+    char key = Serial.read();
+    int value = Serial.parseInt();
+
+    uint16_t result;
+    switch (key) {
+      case 'a':
+        result = Add(value);
+        Serial.print("Your Balance: ");
+        Serial.println(result);
+        break;
+
+      case 's':
+        result = Sub(value);
+        Serial.print("Your Balance: ");
+        Serial.println(result);
+        break;
+
+      case 'b':
+        result = GetBalance();
+        Serial.print("Your Balance: ");
+        Serial.println(result);
+        break;
+    }
+  }
+}
+
+uint16_t GetBalance() {
+  while (!rfid.PICC_IsNewCardPresent()) { Serial.println("Not present  "); }  // Если новая метка не поднесена - вернуться в начало loop
+  if (!rfid.PICC_ReadCardSerial()) {
+    Serial.println("Try read");
+    if (!rfid.PICC_ReadCardSerial()) {
+      Serial.println("Try read");
+      return;
+    }
+  }
+
+  /* Аутентификация сектора, указываем блок безопасности #7 и ключ B */
+  status = rfid.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_B, 7, &key, &(rfid.uid));
+  if (status != MFRC522::STATUS_OK) {  // Если не окэй
+    Serial.println("Auth error");      // Выводим ошибку
     return;
   }
-   
-  // Select one of the cards
-  if ( ! mfrc522.PICC_ReadCardSerial()) 
-  {
+
+  /* Чтение блока, указываем блок данных #6 */
+  uint8_t dataBlock[18];             // Буфер
+  uint8_t size = sizeof(dataBlock);  // Размер буфера
+
+  status = rfid.MIFARE_Read(6, dataBlock, &size);  // Читаем блок 6
+  if (status != MFRC522::STATUS_OK) {              // Если не окэй
+    Serial.println("Read error");                  // Выводим ошибку
     return;
   }
-    Serial.println("card selected");
-          
-   //the blockcontent array is written into the card block
-   writeBlock(block, blockcontent);
-    
-   //read the block back
-   readBlock(block, readbackblock);
-   //uncomment below line if you want to see the entire 1k memory with the block written into it.
-   //mfrc522.PICC_DumpToSerial(&(mfrc522.uid));
-    
-   //print the block contents
-   Serial.print("read block: ");
-   for (int j=0 ; j<16 ; j++)
-   {
-     Serial.write (readbackblock[j]);
-   }
-   Serial.println("");
+
+  rfid.PICC_HaltA();  // Завершаем работу с меткой
+  rfid.PCD_StopCrypto1();
+
+  return dataBlock[0] * 256 + dataBlock[1];
 }
- 
- 
- 
-//Write specific block    
-int writeBlock(int blockNumber, byte arrayAddress[]) 
-{
-  //this makes sure that we only write into data blocks. Every 4th block is a trailer block for the access/security info.
-  int largestModulo4Number=blockNumber/4*4;
-  int trailerBlock=largestModulo4Number+3;//determine trailer block for the sector
-  if (blockNumber > 2 && (blockNumber+1)%4 == 0){Serial.print(blockNumber);Serial.println(" is a trailer block:");return 2;}
-  Serial.print(blockNumber);
-  Serial.println(" is a data block:");
-   
-  //authentication of the desired block for access
-  byte status = mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, trailerBlock, &key, &(mfrc522.uid));
-  if (status != MFRC522::STATUS_OK) {
-         Serial.print("PCD_Authenticate() failed: ");
-         Serial.println(mfrc522.GetStatusCodeName(status));
-         return 3;//return "3" as error message
+
+uint16_t Add(uint16_t moneyToAdd) {
+
+  while (!rfid.PICC_IsNewCardPresent()) { Serial.println("Not present  "); }  // Если новая метка не поднесена - вернуться в начало loop
+  if (!rfid.PICC_ReadCardSerial()) {
+    Serial.println("Try read");
+    if (!rfid.PICC_ReadCardSerial()) {
+      Serial.println("Try read");
+      return;
+    }
   }
-   
-  //writing the block 
-  status = mfrc522.MIFARE_Write(blockNumber, arrayAddress, 16);
-  //status = mfrc522.MIFARE_Write(9, value1Block, 16);
-  if (status != MFRC522::STATUS_OK) {
-           Serial.print("MIFARE_Write() failed: ");
-           Serial.println(mfrc522.GetStatusCodeName(status));
-           return 4;//return "4" as error message
+
+  /* Аутентификация сектора, указываем блок безопасности #7 и ключ B */
+  status = rfid.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_B, 7, &key, &(rfid.uid));
+  if (status != MFRC522::STATUS_OK) {  // Если не окэй
+    Serial.println("Auth error");      // Выводим ошибку
+    return;
   }
-  Serial.println("block was written");
+
+  /* Чтение блока, указываем блок данных #6 */
+  uint8_t dataBlock[18];             // Буфер
+  uint8_t size = sizeof(dataBlock);  // Размер буфера
+
+  status = rfid.MIFARE_Read(6, dataBlock, &size);  // Читаем блок 6
+  if (status != MFRC522::STATUS_OK) {              // Если не окэй
+    Serial.println("Read error");                  // Выводим ошибку
+    return;
+  }
+
+  uint16_t money = dataBlock[0] * 256 + dataBlock[1];
+
+  money += moneyToAdd;
+  uint16_t copy = money;
+
+  uint8_t t = money / 256;
+  money -= t * 256;
+
+  uint8_t dataToWrite[16] = { t, money, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+  status = rfid.MIFARE_Write(6, dataToWrite, 16);  // Пишем массив в блок 6
+  if (status != MFRC522::STATUS_OK) {              // Если не окэй
+    Serial.println("Write error");                 // Выводим ошибку
+    return;
+  }
+
+  rfid.PICC_HaltA();  // Завершаем работу с меткой
+  rfid.PCD_StopCrypto1();
+
+  return copy;
 }
- 
- 
- 
-//Read specific block
-int readBlock(int blockNumber, byte arrayAddress[]) 
-{
-  int largestModulo4Number=blockNumber/4*4;
-  int trailerBlock=largestModulo4Number+3;//determine trailer block for the sector
- 
-  //authentication of the desired block for access
-  byte status = mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, trailerBlock, &key, &(mfrc522.uid));
- 
-  if (status != MFRC522::STATUS_OK) {
-         Serial.print("PCD_Authenticate() failed (read): ");
-         Serial.println(mfrc522.GetStatusCodeName(status));
-         return 3;//return "3" as error message
+
+uint16_t Sub(uint16_t moneyToSub) {
+  while (!rfid.PICC_IsNewCardPresent()) { Serial.println("Not present  "); }  // Если новая метка не поднесена - вернуться в начало loop
+  if (!rfid.PICC_ReadCardSerial()) {
+    Serial.println("Try read");
+    if (!rfid.PICC_ReadCardSerial()) {
+      Serial.println("Try read");
+      return;
+    }
   }
- 
-//reading a block
-byte buffersize = 18;//we need to define a variable with the read buffer size, since the MIFARE_Read method below needs a pointer to the variable that contains the size... 
-status = mfrc522.MIFARE_Read(blockNumber, arrayAddress, &buffersize);//&buffersize is a pointer to the buffersize variable; MIFARE_Read requires a pointer instead of just a number
-  if (status != MFRC522::STATUS_OK) {
-          Serial.print("MIFARE_read() failed: ");
-          Serial.println(mfrc522.GetStatusCodeName(status));
-          return 4;//return "4" as error message
+
+  /* Аутентификация сектора, указываем блок безопасности #7 и ключ B */
+  status = rfid.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_B, 7, &key, &(rfid.uid));
+  if (status != MFRC522::STATUS_OK) {  // Если не окэй
+    Serial.println("Auth error");      // Выводим ошибку
+    return;
   }
-  Serial.println("block was read");
+
+  /* Чтение блока, указываем блок данных #6 */
+  uint8_t dataBlock[18];             // Буфер
+  uint8_t size = sizeof(dataBlock);  // Размер буфера
+
+  status = rfid.MIFARE_Read(6, dataBlock, &size);  // Читаем блок 6
+  if (status != MFRC522::STATUS_OK) {              // Если не окэй
+    Serial.println("Read error");                  // Выводим ошибку
+    return;
+  }
+
+  uint16_t money = dataBlock[0] * 256 + dataBlock[1];
+
+  if (moneyToSub <= money) {
+    money -= moneyToSub;
+  } else {
+    money = 0;
+  }
+
+  uint16_t copy = money;
+  uint8_t t = money / 256;
+  money -= t * 256;
+
+  uint8_t dataToWrite[16] = { t, money, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+  status = rfid.MIFARE_Write(6, dataToWrite, 16);  // Пишем массив в блок 6
+  if (status != MFRC522::STATUS_OK) {              // Если не окэй
+    Serial.println("Write error");                 // Выводим ошибку
+    return;
+  }
+
+  rfid.PICC_HaltA();  // Завершаем работу с меткой
+  rfid.PCD_StopCrypto1();
+
+  return copy;
 }
