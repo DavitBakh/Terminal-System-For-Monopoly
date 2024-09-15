@@ -1,16 +1,44 @@
 #include <SPI.h>
 #include <MFRC522.h>
+#include <Keypad.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
 
 #define RST_PIN 9  // Пин rfid модуля RST
 #define SS_PIN 10  // Пин rfid модуля SS
+
+// Set the LCD address to 0x27 for a 16 chars and 2 line display
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 MFRC522 rfid(SS_PIN, RST_PIN);  // Объект rfid модуля
 MFRC522::MIFARE_Key key;        // Объект ключа
 MFRC522::StatusCode status;     // Объект статуса
 
+const byte ROWS = 4;
+const byte COLS = 4;
+
+char hexaKeys[ROWS][COLS] = {
+  { '*', '7', '4', '1' },
+  { '0', '8', '5', '2' },
+  { '#', '9', '6', '3' },
+  { 'D', 'C', 'B', 'A' }
+};
+
+byte rowPins[ROWS] = { 9, 8, 7, 6 };
+byte colPins[COLS] = { 5, 4, 3, 2 };
+
+Keypad keypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
+
+int zPin = A2;
+
 void setup() {
   Serial.begin(9600);  // Инициализация Serial
   Serial.setTimeout(5);
+
+  lcd.begin();
+  lcd.backlight();
+
+  pinMode(zPin, OUTPUT);
 
   SPI.begin();                               // Инициализация SPI
   rfid.PCD_Init();                           // Инициализация модуля
@@ -22,6 +50,12 @@ void setup() {
     key.keyByte[i] = 0xFF;        // Ключ по умолчанию 0xFFFFFFFFFFFF
   }
 }
+
+char* arr = new char[10];
+char command;
+short index = 0;
+
+bool flag = false;
 
 void loop() {
   // Занимаемся чем угодно
@@ -35,38 +69,86 @@ void loop() {
     rfid.PCD_Init();                       // Инициализируем заного
   }
 
-
   // send data only when you receive data:
-  if (Serial.available() > 1) {
-    // read the incoming byte:
-    char key = Serial.read();
-    int value = Serial.parseInt();
+  char key = keypad.getKey();
+  if (key) {
+
+    Serial.println(key);
+    if (flag) {
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      flag = false;
+    }
+    lcd.print(key);
+
+    digitalWrite(zPin, 1);
+    delay(100);
+    digitalWrite(zPin, 0);
+
+    if (key != '#') {
+      arr[index++] = key;
+      return;
+    }
+
+    // set flag to clear the display when start new input
+    flag = true;
+
+    arr[index] = '\0';
+    index = 0;
 
     uint16_t result;
-    switch (key) {
-      case 'a':
-        result = Add(value);
+    switch (arr[0]) {
+      case 'A':
+        result = Add(atoi(arr + 1));
         Serial.print("Your Balance: ");
         Serial.println(result);
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Your Balance");
+        lcd.setCursor(0, 1);
+        lcd.print(result, DEC);
         break;
 
-      case 's':
-        result = Sub(value);
+      case 'B':
+        result = Sub(atoi(arr + 1));
         Serial.print("Your Balance: ");
         Serial.println(result);
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Your Balance");
+        lcd.setCursor(0, 1);
+        lcd.print(result, DEC);
         break;
 
-      case 'b':
+      case 'C':
         result = GetBalance();
-        Serial.print("Your Balance: ");
+        Serial.print("Your Balance");
         Serial.println(result);
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Your Balance");
+        lcd.setCursor(0, 1);
+        lcd.print(result, DEC);
         break;
     }
   }
 }
 
+bool zummer = false;
+
 uint16_t GetBalance() {
-  while (!rfid.PICC_IsNewCardPresent()) { Serial.println("Not present  "); }  // Если новая метка не поднесена - вернуться в начало loop
+  while (!rfid.PICC_IsNewCardPresent()) {
+
+    static uint32_t rebootTimer = millis();
+    if (millis() - rebootTimer >= 250) {  // Таймер с периодом 1500 мс
+      rebootTimer = millis();             // Обновляем таймер
+      digitalWrite(zPin, zummer);
+      zummer = !zummer;
+    }
+
+    Serial.println("Not present  ");
+
+  }  // Если новая метка не поднесена - вернуться в начало loop
   if (!rfid.PICC_ReadCardSerial()) {
     Serial.println("Try read");
     if (!rfid.PICC_ReadCardSerial()) {
@@ -95,12 +177,27 @@ uint16_t GetBalance() {
   rfid.PICC_HaltA();  // Завершаем работу с меткой
   rfid.PCD_StopCrypto1();
 
+  delay(100);
+  digitalWrite(zPin, 1);
+  delay(100);
+  digitalWrite(zPin, 0);
+
   return dataBlock[0] * 256 + dataBlock[1];
 }
 
 uint16_t Add(uint16_t moneyToAdd) {
 
-  while (!rfid.PICC_IsNewCardPresent()) { Serial.println("Not present  "); }  // Если новая метка не поднесена - вернуться в начало loop
+  while (!rfid.PICC_IsNewCardPresent()) {
+
+    static uint32_t rebootTimer = millis();
+    if (millis() - rebootTimer >= 250) {  // Таймер с периодом 1500 мс
+      rebootTimer = millis();             // Обновляем таймер
+      digitalWrite(zPin, zummer);
+      zummer = !zummer;
+    }
+
+    Serial.println("Not present  ");
+  }  // Если новая метка не поднесена - вернуться в начало loop
   if (!rfid.PICC_ReadCardSerial()) {
     Serial.println("Try read");
     if (!rfid.PICC_ReadCardSerial()) {
@@ -145,11 +242,26 @@ uint16_t Add(uint16_t moneyToAdd) {
   rfid.PICC_HaltA();  // Завершаем работу с меткой
   rfid.PCD_StopCrypto1();
 
+  delay(100);
+  digitalWrite(zPin, 1);
+  delay(100);
+  digitalWrite(zPin, 0);
+
   return copy;
 }
 
 uint16_t Sub(uint16_t moneyToSub) {
-  while (!rfid.PICC_IsNewCardPresent()) { Serial.println("Not present  "); }  // Если новая метка не поднесена - вернуться в начало loop
+  while (!rfid.PICC_IsNewCardPresent()) {
+
+    static uint32_t rebootTimer = millis();
+    if (millis() - rebootTimer >= 250) {  // Таймер с периодом 1500 мс
+      rebootTimer = millis();             // Обновляем таймер
+      digitalWrite(zPin, zummer);
+      zummer = !zummer;
+    }
+
+    Serial.println("Not present  ");
+  }  // Если новая метка не поднесена - вернуться в начало loop
   if (!rfid.PICC_ReadCardSerial()) {
     Serial.println("Try read");
     if (!rfid.PICC_ReadCardSerial()) {
@@ -195,8 +307,14 @@ uint16_t Sub(uint16_t moneyToSub) {
     return;
   }
 
+
   rfid.PICC_HaltA();  // Завершаем работу с меткой
   rfid.PCD_StopCrypto1();
+
+  delay(100);
+  digitalWrite(zPin, 1);
+  delay(100);
+  digitalWrite(zPin, 0);
 
   return copy;
 }
