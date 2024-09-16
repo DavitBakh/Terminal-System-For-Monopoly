@@ -97,38 +97,21 @@ void loop() {
     index = 0;
 
     uint16_t result;
+    bool state = false;
     switch (arr[0]) {
       case 'A':
-        result = Add(atoi(arr + 1));
-        Serial.print("Your Balance: ");
-        Serial.println(result);
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("Your Balance");
-        lcd.setCursor(0, 1);
-        lcd.print(result, DEC);
+        result = Add(atoi(arr + 1), state);
+        Print(result, state);
         break;
 
       case 'B':
-        result = Sub(atoi(arr + 1));
-        Serial.print("Your Balance: ");
-        Serial.println(result);
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("Your Balance");
-        lcd.setCursor(0, 1);
-        lcd.print(result, DEC);
+        result = Sub(atoi(arr + 1), state);
+        Print(result, state);
         break;
 
       case 'C':
-        result = GetBalance();
-        Serial.print("Your Balance");
-        Serial.println(result);
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("Your Balance");
-        lcd.setCursor(0, 1);
-        lcd.print(result, DEC);
+        result = GetBalance(state);
+        Print(result, state);
         break;
     }
   }
@@ -136,7 +119,7 @@ void loop() {
 
 bool zummer = false;
 
-uint16_t GetBalance() {
+uint16_t GetBalance(bool& state) {
   while (!rfid.PICC_IsNewCardPresent()) {
 
     static uint32_t rebootTimer = millis();
@@ -174,18 +157,17 @@ uint16_t GetBalance() {
     return;
   }
 
+
   rfid.PICC_HaltA();  // Завершаем работу с меткой
   rfid.PCD_StopCrypto1();
 
-  delay(100);
-  digitalWrite(zPin, 1);
-  delay(100);
-  digitalWrite(zPin, 0);
+  Zummer();
 
+  state = true;
   return dataBlock[0] * 256 + dataBlock[1];
 }
 
-uint16_t Add(uint16_t moneyToAdd) {
+uint16_t Add(uint16_t moneyToAdd, bool& state) {
 
   while (!rfid.PICC_IsNewCardPresent()) {
 
@@ -242,15 +224,13 @@ uint16_t Add(uint16_t moneyToAdd) {
   rfid.PICC_HaltA();  // Завершаем работу с меткой
   rfid.PCD_StopCrypto1();
 
-  delay(100);
-  digitalWrite(zPin, 1);
-  delay(100);
-  digitalWrite(zPin, 0);
+  Zummer();
 
+  state = true;
   return copy;
 }
 
-uint16_t Sub(uint16_t moneyToSub) {
+uint16_t Sub(uint16_t moneyToSub, bool& state) {
   while (!rfid.PICC_IsNewCardPresent()) {
 
     static uint32_t rebootTimer = millis();
@@ -311,10 +291,33 @@ uint16_t Sub(uint16_t moneyToSub) {
   rfid.PICC_HaltA();  // Завершаем работу с меткой
   rfid.PCD_StopCrypto1();
 
+  Zummer();
+
+  state = true;
+  return copy;
+}
+
+void Zummer() {
   delay(100);
   digitalWrite(zPin, 1);
   delay(100);
   digitalWrite(zPin, 0);
+}
 
-  return copy;
+void Print(const uint16_t& result, const bool& state) {
+  if (state) {
+    Serial.print("Your Balance: ");
+    Serial.println(result);
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Your Balance");
+    lcd.setCursor(0, 1);
+    lcd.print(result, DEC);
+    return;
+  }
+
+  Serial.print("Error Try again");
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Error Try Again!");
 }
