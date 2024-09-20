@@ -18,10 +18,10 @@ const byte ROWS = 4;
 const byte COLS = 4;
 
 char hexaKeys[ROWS][COLS] = {
-  { '*', '7', '4', '1' },
-  { '0', '8', '5', '2' },
-  { '#', '9', '6', '3' },
-  { 'D', 'C', 'B', 'A' }
+  { '1', '2', '3', 'A' },
+  { '4', '5', '6', 'B' },
+  { '7', '8', '9', 'C' },
+  { '*', '0', '#', 'D' }
 };
 
 byte rowPins[ROWS] = { 9, 8, 7, 6 };
@@ -79,16 +79,28 @@ void loop() {
       lcd.setCursor(0, 0);
       flag = false;
     }
-    lcd.print(key);
+
 
     digitalWrite(zPin, 1);
     delay(100);
     digitalWrite(zPin, 0);
 
+    if (key == '*') {
+      index--;
+      lcd.setCursor(index, 0);
+      lcd.print("0");
+      lcd.setCursor(index, 0);
+
+      return;
+    }
+
+    lcd.print(key);
+
     if (key != '#') {
       arr[index++] = key;
       return;
     }
+
 
     // set flag to clear the display when start new input
     flag = true;
@@ -96,22 +108,22 @@ void loop() {
     arr[index] = '\0';
     index = 0;
 
-    uint16_t result;
     bool state = false;
     switch (arr[0]) {
       case 'A':
-        result = Add(atoi(arr + 1), state);
-        Print(result, state);
+        Print(Add(atoi(arr + 1), state), state);
         break;
 
       case 'B':
-        result = Sub(atoi(arr + 1), state);
-        Print(result, state);
+        Print(Transfer(atoi(arr + 1), state), state);
         break;
 
       case 'C':
-        result = GetBalance(state);
-        Print(result, state);
+        Print(Sub(atoi(arr + 1), state), state);
+        break;
+
+      case 'D':
+        Print(GetBalance(state), state);
         break;
     }
   }
@@ -297,10 +309,19 @@ uint16_t Sub(uint16_t moneyToSub, bool& state) {
   return copy;
 }
 
+uint16_t Transfer(uint16_t moneyToTransfer, bool& state) {
+
+  Print(Sub(moneyToTransfer, state), state);
+
+  delay(1000);
+  state = false;
+  return Add(moneyToTransfer, state);
+}
+
 void Zummer() {
-  delay(100);
+  delay(250);
   digitalWrite(zPin, 1);
-  delay(100);
+  delay(500);
   digitalWrite(zPin, 0);
 }
 
@@ -320,4 +341,5 @@ void Print(const uint16_t& result, const bool& state) {
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Error Try Again!");
+  digitalWrite(zPin, 0);
 }
